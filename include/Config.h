@@ -35,3 +35,29 @@
 // Задержка между соседними цветами демо-последовательности, мс.
 // Настраивается в рантайме через DemoSequence::setStepDelayMs().
 #define DEMO_STEP_DELAY_MS 20
+
+// ---------------------------------------------------------------- Wi-Fi ---
+
+// Имя сети и пароль лежат в .env, из него scripts/load_env.py генерирует
+// WiFiCredentials.h на каждой сборке. Ни .env, ни заголовок в git не идут.
+// Пустые значения ниже - страховка на случай сборки без скрипта: прошивка
+// тогда просто не пойдёт в сеть. Подробности в docs/WIFI.md.
+#if __has_include("WiFiCredentials.h")
+#include "WiFiCredentials.h"
+#endif
+
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
+
+// Имя платы в сети, по нему её видно в списке клиентов роутера.
+#define WIFI_HOSTNAME "rgb-panel"
+
+// Сколько ждём подключения, прежде чем считать попытку неудачной, мс.
+#define WIFI_CONNECT_TIMEOUT_MS 15000
+
+// Пауза между неудачной попыткой и следующей, мс.
+#define WIFI_RETRY_DELAY_MS 5000
