@@ -17,9 +17,13 @@ void WiFiLink::begin(uint32_t nowMs) {
 
 void WiFiLink::startAttempt(uint32_t nowMs) {
   _attempts++;
+  if (_attempts == 1) {
+    _attemptStartedMs = nowMs;  // от него считаем время до выхода в сеть
+  }
   _state = State::Connecting;
   _stateSinceMs = nowMs;
-  WiFi.disconnect(true);
+  // Без disconnect перед begin: выключение радиомодуля прямо перед попыткой
+  // съедало первую ассоциацию, и стенд выходил в сеть только со второго раза.
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("Wi-Fi: попытка %u подключиться к сети\n", _attempts);
 }
@@ -33,12 +37,15 @@ void WiFiLink::update(uint32_t nowMs) {
       if (WiFi.status() == WL_CONNECTED) {
         _state = State::Connected;
         _stateSinceMs = nowMs;
-        Serial.printf("Wi-Fi: подключено, IP %s, RSSI %d дБм\n",
+        // Сон модема добавляет к задержке до 100 мс, для потока кадров это
+        // много. Настройка ложится на уже поднятое соединение.
+        WiFi.setSleep(false);
+        Serial.printf("Wi-Fi: подключено за %lu мс, IP %s, RSSI %d дБм\n",
+                      static_cast<unsigned long>(nowMs - _attemptStartedMs),
                       WiFi.localIP().toString().c_str(), WiFi.RSSI());
-      } else if (nowMs - _stateSinceMs >= WIFI_CONNECT_TIMEOUT_MS) {
+      } else if (nowMs - _stateSinceMs >= attemptTimeoutMs()) {
         _state = State::Waiting;
         _stateSinceMs = nowMs;
-        WiFi.disconnect(true);
         Serial.printf("Wi-Fi: таймаут подключения, повтор через %d с\n",
                       WIFI_RETRY_DELAY_MS / 1000);
       }
@@ -72,4 +79,8 @@ const char* WiFiLink::stateName() const {
       return "ожидание";
   }
   return "?";
+}
+
+uint32_t WiFiLink::attemptTimeoutMs() const {
+  return _attempts <= 1 ? WIFI_FIRST_ATTEMPT_TIMEOUT_MS : WIFI_CONNECT_TIMEOUT_MS;
 }

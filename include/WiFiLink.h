@@ -40,7 +40,11 @@ class WiFiLink {
  private:
   void startAttempt(uint32_t nowMs);
 
+  // Таймаут текущей попытки: первая обрывается раньше остальных.
+  uint32_t attemptTimeoutMs() const;
+
   State _state = State::Disabled;
   uint32_t _stateSinceMs = 0;
+  uint32_t _attemptStartedMs = 0;  // момент первой попытки, для замера
   uint16_t _attempts = 0;
 };
