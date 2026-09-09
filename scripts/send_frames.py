@@ -4,93 +4,40 @@
 Гонит на плату пробную картинку с заданной частотой и печатает, сколько
 кадров реально ушло. Потери считаются на стороне платы, они видны в её логе.
 
+По умолчанию идёт карусель смайликов: восемь лиц по 10 секунд каждое, дальше
+круг повторяется. Сами смайлики живут в scripts/faces.py.
+
 Примеры:
     python scripts/send_frames.py 192.168.1.42
     python scripts/send_frames.py 192.168.1.42 --seconds 0
-    python scripts/send_frames.py 192.168.1.42 --fps 30 --pattern sweep
+    python scripts/send_frames.py 192.168.1.42 --face очки --seconds 20
+    python scripts/send_frames.py 192.168.1.42 --fps 60 --pattern sweep
 """
 
 import argparse
 import colorsys
-import math
 import socket
 import struct
 import time
+
+import faces
 
 MAGIC = b"RP"
 VERSION = 1
 FLAG_LAST_PACKET = 0x01
 HEADER = struct.Struct(">2sBBHHH")
 
-WIDTH = 16
-HEIGHT = 16
-PIXELS = WIDTH * HEIGHT
-
-BLACK = (0, 0, 0)
-
-# Смайлик: длительность одного круга анимации и его цвета.
-SMILEY_LOOP_SECONDS = 10.0
-SMILEY_FACE = (255, 190, 20)
-SMILEY_DARK = (12, 6, 0)
+WIDTH = faces.WIDTH
+HEIGHT = faces.HEIGHT
+PIXELS = faces.PIXELS
 
 
-def pattern_smiley(frame_index, elapsed):
-    """Улыбающийся смайлик во всю панель, цикл 10 секунд.
-
-    За круг лицо дважды моргает, один раз подмигивает правым глазом, улыбка
-    успевает разойтись до широкой и вернуться, а само лицо слегка покачивается.
-    Всё считается от времени, а не от номера кадра, поэтому на любой частоте
-    анимация идёт одинаково.
-    """
-    phase = (elapsed % SMILEY_LOOP_SECONDS) / SMILEY_LOOP_SECONDS
-    wave = 2 * math.pi * phase
-
-    bob = round(math.sin(wave) * 0.6)              # покачивание, ±1 пиксель
-    depth = 1.2 + 1.8 * (0.5 - 0.5 * math.cos(wave))  # насколько широкая улыбка
-    glow = 0.82 + 0.18 * math.sin(2 * wave)        # лицо «дышит» яркостью
-    blink = 0.30 <= phase < 0.34 or 0.62 <= phase < 0.66
-    wink = 0.82 <= phase < 0.90
-
-    face = tuple(min(255, int(channel * glow)) for channel in SMILEY_FACE)
-    pixels = [BLACK] * PIXELS
-
-    center = (WIDTH - 1) / 2.0
-    radius = 7.4
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            dx = x - center
-            dy = y - center - bob
-            if dx * dx + dy * dy <= radius * radius:
-                pixels[y * WIDTH + x] = face
-
-    def put_dark(x, y):
-        y += bob
-        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-            pixels[y * WIDTH + x] = SMILEY_DARK
-
-    # Глаза: два столбика по два пикселя. Закрытый глаз - нижняя строка.
-    for x in (4, 5):
-        put_dark(x, 6)
-        if not blink:
-            put_dark(x, 5)
-    for x in (10, 11):
-        put_dark(x, 6)
-        if not blink and not wink:
-            put_dark(x, 5)
-
-    # Улыбка: парабола, концы которой задраны тем выше, чем шире улыбка.
-    for x in range(3, 13):
-        norm = (x - center) / 4.5
-        y = round(11.0 - depth * norm * norm)
-        put_dark(x, y)
-        # На широкой улыбке рот становится в два пикселя - виден «оскал».
-        if depth > 2.2 and abs(norm) < 0.5:
-            put_dark(x, y - 1)
-
-    return b"".join(bytes(color) for color in pixels)
+def pattern_smiley(frame_index, elapsed, forced=None):
+    """Карусель смайликов, по 10 секунд на каждого."""
+    return faces.render(elapsed, forced)
 
 
-def pattern_rainbow(frame_index, elapsed):
+def pattern_rainbow(frame_index, elapsed, forced=None):
     """Радуга, плывущая по диагонали."""
     pixels = bytearray()
     shift = (frame_index * 2) % 256
@@ -102,7 +49,7 @@ def pattern_rainbow(frame_index, elapsed):
     return bytes(pixels)
 
 
-def pattern_sweep(frame_index, elapsed):
+def pattern_sweep(frame_index, elapsed, forced=None):
     """Одна бегущая строка: видно разрывы и пропуски кадров."""
     pixels = bytearray(PIXELS * 3)
     row = (frame_index // 2) % HEIGHT
@@ -112,7 +59,7 @@ def pattern_sweep(frame_index, elapsed):
     return bytes(pixels)
 
 
-def pattern_checker(frame_index, elapsed):
+def pattern_checker(frame_index, elapsed, forced=None):
     """Шахматка, меняющая фазу: заметно любое залипание картинки."""
     pixels = bytearray()
     phase = frame_index % 2
@@ -142,9 +89,11 @@ def main():
     parser.add_argument("host", help="IP платы, его видно в её логе")
     parser.add_argument("--port", type=int, default=4210)
     parser.add_argument("--fps", type=float, default=20.0)
-    parser.add_argument("--seconds", type=float, default=10.0,
+    parser.add_argument("--seconds", type=float, default=float(faces.LOOP_SECONDS),
                         help="0 - гнать бесконечно")
     parser.add_argument("--pattern", choices=sorted(PATTERNS), default="smiley")
+    parser.add_argument("--face", choices=faces.NAMES,
+                        help="показывать только один смайлик")
     args = parser.parse_args()
 
     make_pixels = PATTERNS[args.pattern]
@@ -153,18 +102,31 @@ def main():
 
     print(f"{args.host}:{args.port}, {args.fps:g} кадр/с, картинка "
           f"{args.pattern}, датаграмма {HEADER.size + PIXELS * 3} байт")
+    if args.pattern == "smiley":
+        if args.face:
+            print(f"смайлик: {args.face}")
+        else:
+            print(f"карусель: {', '.join(faces.NAMES)}; "
+                  f"по {faces.FACE_SECONDS:g} с на каждого")
 
     seq = 0
     sent = 0
+    shown = None
     started = time.monotonic()
     next_send = started
     try:
         while args.seconds == 0 or time.monotonic() - started < args.seconds:
             elapsed = time.monotonic() - started
-            sock.sendto(build_datagram(seq, make_pixels(seq, elapsed)),
+            sock.sendto(build_datagram(seq, make_pixels(seq, elapsed, args.face)),
                         (args.host, args.port))
             seq = (seq + 1) & 0xFFFF
             sent += 1
+
+            if args.pattern == "smiley" and args.face is None:
+                index = faces.face_at(elapsed)[0]
+                if index != shown:
+                    shown = index
+                    print(f"  {elapsed:5.1f} с  {faces.NAMES[index]}")
 
             # Расписание считаем от старта, иначе ошибка копится с каждым кадром.
             next_send += period
