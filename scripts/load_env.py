@@ -1,4 +1,4 @@
-"""Готовит параметры Wi-Fi для прошивки: .env -> include/WiFiCredentials.h.
+"""Готовит секреты для прошивки: .env -> include/WiFiCredentials.h.
 
 Файл .env лежит рядом с проектом и в git не попадает, сгенерированный
 заголовок тоже. В исходниках паролей нет, значения нигде не печатаются.
@@ -9,21 +9,23 @@
 достаточно экранирования по правилам C.
 
 Если .env отсутствует или SSID пуст, сборка не падает: строки становятся
-пустыми, а прошивка сообщает об этом в лог и работает без сети.
+пустыми, а прошивка сообщает об этом в лог и работает без сети. Пустой
+OTA_PASSWORD означает, что обновление по воздуху не включится.
+
+Пароль для самой заливки по воздуху подставляет scripts/ota_auth.py: он должен
+быть post-скриптом, иначе флаги затирает платформа.
 """
 
 from pathlib import Path
 
 Import("env")  # noqa: F821  - подставляется PlatformIO
 
-KEYS = ("WIFI_SSID", "WIFI_PASSWORD")
+KEYS = ("WIFI_SSID", "WIFI_PASSWORD", "OTA_PASSWORD")
 
-HEADER = """// Сгенерировано scripts/load_env.py из .env при сборке.
+HEADER_TOP = """// Сгенерировано scripts/load_env.py из .env при сборке.
 // Файл не редактируется руками и не попадает в git.
 #pragma once
 
-#define {ssid_key} {ssid}
-#define {password_key} {password}
 """
 
 
@@ -53,11 +55,11 @@ def c_string_literal(value):
         if char in ("\\", '"'):
             escaped.append("\\" + char)
         elif char == "\n":
-            escaped.append("\n")
+            escaped.append("\\n")
         elif char == "\r":
-            escaped.append("\r")
+            escaped.append("\\r")
         elif char == "\t":
-            escaped.append("\t")
+            escaped.append("\\t")
         else:
             escaped.append(char)
     return '"' + "".join(escaped) + '"'
@@ -70,16 +72,16 @@ if env_file.is_file():
     env_values = parse_env_file(env_file)
     if not env_values.get("WIFI_SSID"):
         print("load_env: WIFI_SSID is empty in .env, Wi-Fi disabled")
+    if not env_values.get("OTA_PASSWORD"):
+        print("load_env: OTA_PASSWORD is empty in .env, OTA disabled")
 else:
     env_values = {}
     print("load_env: .env not found, Wi-Fi disabled (see docs/WIFI.md)")
 
-content = HEADER.format(
-    ssid_key=KEYS[0],
-    ssid=c_string_literal(env_values.get(KEYS[0], "")),
-    password_key=KEYS[1],
-    password=c_string_literal(env_values.get(KEYS[1], "")),
-)
+lines = [HEADER_TOP]
+for key in KEYS:
+    lines.append(f"#define {key} {c_string_literal(env_values.get(key, ''))}\n")
+content = "".join(lines)
 
 header_path = project_dir / "include" / "WiFiCredentials.h"
 # Перезаписываем только при изменении, иначе каждая сборка была бы полной.

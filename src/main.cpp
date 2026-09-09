@@ -9,6 +9,7 @@
 #include "Config.h"
 #include "DemoSequence.h"
 #include "FrameReceiver.h"
+#include "OtaUpdater.h"
 #include "WiFiLink.h"
 
 namespace {
@@ -20,6 +21,7 @@ CRGB leds[LED_COUNT];
 DemoSequence demo(DEMO_STEP_DELAY_MS);
 WiFiLink wifi;
 FrameReceiver receiver;
+OtaUpdater ota;
 
 Mode mode = Mode::Demo;
 
@@ -46,6 +48,7 @@ void showColor(const CRGB& color) {
 void followWiFiState() {
   if (wifi.isConnected() && !receiver.isListening()) {
     receiver.begin(FRAME_UDP_PORT);
+    ota.begin(leds, LED_COUNT);
   } else if (!wifi.isConnected() && receiver.isListening()) {
     receiver.end();
   }
@@ -121,7 +124,13 @@ void loop() {
   const uint32_t now = millis();
 
   wifi.update(now);
+  ota.handle();
   followWiFiState();
+
+  // Пока идёт заливка, панелью распоряжается OtaUpdater: он рисует прогресс.
+  if (ota.isUpdating()) {
+    return;
+  }
 
   // Приёмник пишет пиксели прямо в буфер панели, поэтому вычитывать его
   // нужно до того, как демо зальёт буфер своим цветом.
