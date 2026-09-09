@@ -6,12 +6,13 @@
 
 Примеры:
     python scripts/send_frames.py 192.168.1.42
-    python scripts/send_frames.py 192.168.1.42 --fps 30 --seconds 60
-    python scripts/send_frames.py 192.168.1.42 --pattern sweep
+    python scripts/send_frames.py 192.168.1.42 --seconds 0
+    python scripts/send_frames.py 192.168.1.42 --fps 30 --pattern sweep
 """
 
 import argparse
 import colorsys
+import math
 import socket
 import struct
 import time
@@ -25,8 +26,71 @@ WIDTH = 16
 HEIGHT = 16
 PIXELS = WIDTH * HEIGHT
 
+BLACK = (0, 0, 0)
 
-def pattern_rainbow(frame_index):
+# Смайлик: длительность одного круга анимации и его цвета.
+SMILEY_LOOP_SECONDS = 10.0
+SMILEY_FACE = (255, 190, 20)
+SMILEY_DARK = (12, 6, 0)
+
+
+def pattern_smiley(frame_index, elapsed):
+    """Улыбающийся смайлик во всю панель, цикл 10 секунд.
+
+    За круг лицо дважды моргает, один раз подмигивает правым глазом, улыбка
+    успевает разойтись до широкой и вернуться, а само лицо слегка покачивается.
+    Всё считается от времени, а не от номера кадра, поэтому на любой частоте
+    анимация идёт одинаково.
+    """
+    phase = (elapsed % SMILEY_LOOP_SECONDS) / SMILEY_LOOP_SECONDS
+    wave = 2 * math.pi * phase
+
+    bob = round(math.sin(wave) * 0.6)              # покачивание, ±1 пиксель
+    depth = 1.2 + 1.8 * (0.5 - 0.5 * math.cos(wave))  # насколько широкая улыбка
+    glow = 0.82 + 0.18 * math.sin(2 * wave)        # лицо «дышит» яркостью
+    blink = 0.30 <= phase < 0.34 or 0.62 <= phase < 0.66
+    wink = 0.82 <= phase < 0.90
+
+    face = tuple(min(255, int(channel * glow)) for channel in SMILEY_FACE)
+    pixels = [BLACK] * PIXELS
+
+    center = (WIDTH - 1) / 2.0
+    radius = 7.4
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            dx = x - center
+            dy = y - center - bob
+            if dx * dx + dy * dy <= radius * radius:
+                pixels[y * WIDTH + x] = face
+
+    def put_dark(x, y):
+        y += bob
+        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+            pixels[y * WIDTH + x] = SMILEY_DARK
+
+    # Глаза: два столбика по два пикселя. Закрытый глаз - нижняя строка.
+    for x in (4, 5):
+        put_dark(x, 6)
+        if not blink:
+            put_dark(x, 5)
+    for x in (10, 11):
+        put_dark(x, 6)
+        if not blink and not wink:
+            put_dark(x, 5)
+
+    # Улыбка: парабола, концы которой задраны тем выше, чем шире улыбка.
+    for x in range(3, 13):
+        norm = (x - center) / 4.5
+        y = round(11.0 - depth * norm * norm)
+        put_dark(x, y)
+        # На широкой улыбке рот становится в два пикселя - виден «оскал».
+        if depth > 2.2 and abs(norm) < 0.5:
+            put_dark(x, y - 1)
+
+    return b"".join(bytes(color) for color in pixels)
+
+
+def pattern_rainbow(frame_index, elapsed):
     """Радуга, плывущая по диагонали."""
     pixels = bytearray()
     shift = (frame_index * 2) % 256
@@ -38,7 +102,7 @@ def pattern_rainbow(frame_index):
     return bytes(pixels)
 
 
-def pattern_sweep(frame_index):
+def pattern_sweep(frame_index, elapsed):
     """Одна бегущая строка: видно разрывы и пропуски кадров."""
     pixels = bytearray(PIXELS * 3)
     row = (frame_index // 2) % HEIGHT
@@ -48,7 +112,7 @@ def pattern_sweep(frame_index):
     return bytes(pixels)
 
 
-def pattern_checker(frame_index):
+def pattern_checker(frame_index, elapsed):
     """Шахматка, меняющая фазу: заметно любое залипание картинки."""
     pixels = bytearray()
     phase = frame_index % 2
@@ -60,6 +124,7 @@ def pattern_checker(frame_index):
 
 
 PATTERNS = {
+    "smiley": pattern_smiley,
     "rainbow": pattern_rainbow,
     "sweep": pattern_sweep,
     "checker": pattern_checker,
@@ -79,7 +144,7 @@ def main():
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--seconds", type=float, default=10.0,
                         help="0 - гнать бесконечно")
-    parser.add_argument("--pattern", choices=sorted(PATTERNS), default="rainbow")
+    parser.add_argument("--pattern", choices=sorted(PATTERNS), default="smiley")
     args = parser.parse_args()
 
     make_pixels = PATTERNS[args.pattern]
@@ -95,7 +160,8 @@ def main():
     next_send = started
     try:
         while args.seconds == 0 or time.monotonic() - started < args.seconds:
-            sock.sendto(build_datagram(seq, make_pixels(seq)),
+            elapsed = time.monotonic() - started
+            sock.sendto(build_datagram(seq, make_pixels(seq, elapsed)),
                         (args.host, args.port))
             seq = (seq + 1) & 0xFFFF
             sent += 1

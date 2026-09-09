@@ -7,3 +7,6 @@
 # Локальные параметры сети
 .env
 include/WiFiCredentials.h
+
+# Служебные файлы Python
+__pycache__/
