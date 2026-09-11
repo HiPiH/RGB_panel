@@ -9,6 +9,9 @@
 фигур сглаживаются по покрытию пикселя, отсюда полутона вместо лесенки. Черты
 лица красятся с оглядкой на освещённость в этой точке, поэтому на теневой
 стороне они темнее.
+
+Полутона при этом не должны съедать контраст: ядро мазка ложится в полную силу,
+и только края уходят в прозрачность.
 """
 
 import math
@@ -21,15 +24,15 @@ FACE_SECONDS = 10.0
 
 BLACK = (0, 0, 0)
 FACE = (255, 176, 26)
-DARK = (26, 12, 2)
-MOUTH = (104, 18, 30)
+DARK = (6, 2, 0)
+MOUTH = (74, 10, 20)
 TONGUE = (214, 74, 96)
 TEETH = (250, 244, 226)
 BLUSH = (255, 92, 84)
 HEART = (232, 28, 68)
 LIPS = (214, 52, 92)
 TEAR = (86, 176, 255)
-GLASS = (20, 20, 32)
+GLASS = (8, 8, 16)
 GLINT = (240, 246, 255)
 WHITE = (255, 255, 255)
 
@@ -38,9 +41,10 @@ HEAD_RADIUS = 7.3
 
 # Свет падает сверху слева и немного спереди.
 LIGHT = (-0.52, -0.62, 0.59)
-AMBIENT = 0.42          # сколько света достаётся теневой стороне
-SPECULAR = 0.5          # сила блика
-SPECULAR_HARDNESS = 16  # чем больше, тем блик компактнее
+AMBIENT = 0.55          # сколько света достаётся теневой стороне
+SHADING_GAMMA = 1.7     # круче спад света, объём заметнее без потери яркости
+SPECULAR = 0.45         # сила блика
+SPECULAR_HARDNESS = 18  # чем больше, тем блик компактнее
 
 
 def clamp(value, low=0.0, high=1.0):
@@ -116,7 +120,7 @@ class Canvas:
         ix, iy = int(round(x)), int(round(y))
         if not (0 <= ix < WIDTH and 0 <= iy < HEIGHT):
             return color
-        light = self.light[iy * WIDTH + ix]
+        light = self.light[iy * WIDTH + ix] ** SHADING_GAMMA
         return scale(color, floor + (1.0 - floor) * light)
 
     def sphere(self, cx, cy, radius, color, glow=1.0):
@@ -145,7 +149,7 @@ class Canvas:
                 ndotl = clamp(nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2])
                 light = AMBIENT + (1.0 - AMBIENT) * ndotl
 
-                tone = scale(color, light * glow)
+                tone = scale(color, (light ** SHADING_GAMMA) * glow)
                 spec = SPECULAR * ndotl ** SPECULAR_HARDNESS
                 if spec > 0.004:
                     tone = mix(tone, WHITE, min(0.6, spec))
@@ -171,12 +175,19 @@ class Canvas:
         """Вертикальный мазок с дробной координатой: кривая идёт без лесенки."""
         top = y - thickness / 2.0
         bottom = y + thickness / 2.0
+        rows = []
         for py in range(int(math.floor(top - 0.5)), int(math.ceil(bottom + 0.5)) + 1):
             overlap = min(bottom, py + 0.5) - max(top, py - 0.5)
-            if overlap <= 0.0:
-                continue
+            if overlap > 0.0:
+                rows.append((py, overlap))
+        if not rows:
+            return
+        # Ядро мазка кладём в полную силу. Без этого тонкая линия расходится
+        # на два полупрозрачных пикселя и рот со глазами теряют контраст.
+        peak = max(overlap for _, overlap in rows)
+        for py, overlap in rows:
             tone = self.lit(x, py, color) if shaded else color
-            self.blend(x, py, tone, clamp(overlap) * alpha)
+            self.blend(x, py, tone, clamp(overlap / peak) * alpha)
 
     def heart(self, cx, cy, size, color):
         """Сердце по неявной формуле, поэтому оно тоже со сглаженным краем."""
@@ -215,13 +226,13 @@ def head(canvas, bob=0.0, glow=1.0):
     canvas.sphere(CENTER, CENTER + bob, HEAD_RADIUS, FACE, glow)
 
 
-def eyes(canvas, bob, left=1.0, right=1.0, width=0.95, height=1.15):
+def eyes(canvas, bob, left=1.0, right=1.0, width=1.05, height=1.3):
     """Глаза-капли. left и right - насколько открыт глаз, 0 закрыт."""
     for cx, openness in ((CENTER - 2.9, left), (CENTER + 2.9, right)):
         canvas.ellipse(cx, 5.7 + bob, width, 0.3 + height * clamp(openness), DARK)
 
 
-def eye_arcs(canvas, bob, happy=True, thickness=1.0):
+def eye_arcs(canvas, bob, happy=True, thickness=1.2):
     """Закрытые глаза дугой: вверх смеются, вниз плачут."""
     for cx in (CENTER - 2.9, CENTER + 2.9):
         for step in range(5):
@@ -236,7 +247,7 @@ def heart_eyes(canvas, bob, size):
         canvas.heart(cx, 5.8 + bob, size, HEART)
 
 
-def smile(canvas, bob, depth, tilt=0.0, thickness=1.1):
+def smile(canvas, bob, depth, tilt=0.0, thickness=1.3):
     """Улыбка параболой, дробная высота сглаживается мазком."""
     for x in range(3, 13):
         norm = (x - CENTER) / 4.5
@@ -244,7 +255,7 @@ def smile(canvas, bob, depth, tilt=0.0, thickness=1.1):
         canvas.stroke(x, y + bob, DARK, thickness)
 
 
-def frown(canvas, bob, depth, thickness=1.1):
+def frown(canvas, bob, depth, thickness=1.3):
     for x in range(4, 12):
         norm = (x - CENTER) / 4.0
         canvas.stroke(x, 10.0 + depth * norm * norm + bob, DARK, thickness)
@@ -321,7 +332,7 @@ def face_smile(canvas, phase):
     open_amount = blink(phase, (0.34, 0.71))
     eyes(canvas, bob, open_amount, open_amount)
     smile(canvas, bob, 1.2 + 1.7 * wave(phase),
-          thickness=1.0 + 0.4 * wave(phase))
+          thickness=1.2 + 0.4 * wave(phase))
 
 
 def face_wink(canvas, phase):
@@ -338,7 +349,7 @@ def face_laugh(canvas, phase):
     openness = wave(phase, cycles=5.0)
     bob = 0.5 * openness
     head(canvas, bob)
-    eye_arcs(canvas, bob, happy=True, thickness=1.0 + 0.3 * openness)
+    eye_arcs(canvas, bob, happy=True, thickness=1.2 + 0.3 * openness)
     open_mouth(canvas, bob, 0.3 + 0.7 * openness)
 
 
@@ -378,7 +389,7 @@ def face_love(canvas, phase):
     bob = -0.3 * beat
     head(canvas, bob)
     heart_eyes(canvas, bob, 1.35 + 0.45 * beat)
-    smile(canvas, bob, 1.8 + 0.8 * beat, thickness=1.0 + 0.4 * beat)
+    smile(canvas, bob, 1.8 + 0.8 * beat, thickness=1.2 + 0.4 * beat)
 
 
 def face_cry(canvas, phase):
