@@ -35,6 +35,7 @@ TEAR = (86, 176, 255)
 GLASS = (8, 8, 16)
 GLINT = (240, 246, 255)
 WHITE = (255, 255, 255)
+EYE_WHITE = (240, 238, 226)
 
 CENTER = (WIDTH - 1) / 2.0
 HEAD_RADIUS = 7.3
@@ -322,6 +323,47 @@ def tear(canvas, x, y):
     canvas.blend(x, y - 0.4, mix(TEAR, WHITE, 0.55), 0.9)
 
 
+# Остановки взгляда за круг: прямо, влево, прямо, вправо.
+GAZE_STOPS = (0.0, -1.0, 0.0, 1.0)
+
+
+def gaze_at(phase):
+    """Куда смотрят зрачки: -1 влево, 0 прямо, 1 вправо.
+
+    Взгляд переводится быстро и потом держится, как у живого глаза. Плавный
+    разгон и торможение считаются по формуле t * t * (3 - 2t).
+    """
+    count = len(GAZE_STOPS)
+    position = phase * count
+    index = int(position) % count
+    local = position - int(position)
+    here = GAZE_STOPS[index]
+    nxt = GAZE_STOPS[(index + 1) % count]
+
+    move = 0.28  # доля отрезка, которая уходит на перевод взгляда
+    if local >= move:
+        return nxt
+    t = local / move
+    return here + (nxt - here) * t * t * (3.0 - 2.0 * t)
+
+
+def eyes_looking(canvas, bob, gaze, openness=1.0):
+    """Глаза с белком и зрачком. Зрачок съезжает по gaze."""
+    height = 0.3 + 1.6 * clamp(openness)
+    # Зрачок ставим ровно по пикселям. На шестнадцати точках размытый зрачок
+    # превращается в серое пятно, и взгляд перестаёт читаться.
+    shift = round(clamp(gaze, -1.0, 1.0))
+    # Центры белков стоят на целых пикселях и симметрично относительно 7.5.
+    # Тогда три положения зрачка ложатся ровно в столбцы белка.
+    for cx in (4.0, 11.0):
+        canvas.ellipse(cx, 5.8 + bob, 1.5, height, EYE_WHITE)
+        if openness > 0.35:
+            # Зрачок чуть ниже центра белка: так взгляд не кажется испуганным.
+            # Строку тоже округляем: зрачок ростом в пиксель обязан попадать
+            # в неё целиком, иначе сквозь него просвечивает белок.
+            canvas.ellipse(cx + shift, round(5.9 + bob), 0.55, 1.0, DARK)
+
+
 # --------------------------------------------------------------- смайлики ---
 
 
@@ -333,6 +375,18 @@ def face_smile(canvas, phase):
     eyes(canvas, bob, open_amount, open_amount)
     smile(canvas, bob, 1.2 + 1.7 * wave(phase),
           thickness=1.2 + 0.4 * wave(phase))
+
+
+def face_gaze(canvas, phase):
+    """Осматривается: взгляд уходит влево, возвращается, уходит вправо."""
+    # Голова тут не покачивается: всё внимание на глазах, а дробный сдвиг
+    # размывал бы зрачок ростом в один пиксель.
+    bob = 0.0
+    head(canvas, bob)
+    gaze = gaze_at(phase)
+    eyes_looking(canvas, bob, gaze, openness=blink(phase, (0.12, 0.63)))
+    # Уголок рта тянется в ту же сторону, куда ушёл взгляд.
+    smile(canvas, bob, 1.3, tilt=-0.7 * gaze)
 
 
 def face_wink(canvas, phase):
@@ -404,6 +458,7 @@ def face_cry(canvas, phase):
 
 FACES = (
     ("улыбка", face_smile),
+    ("взгляд", face_gaze),
     ("подмигивание", face_wink),
     ("хохот", face_laugh),
     ("удивление", face_surprise),
