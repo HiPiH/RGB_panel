@@ -11,6 +11,7 @@
 
 #include "Config.h"
 #include "FrameProtocol.h"
+#include "PanelLayout.h"
 
 class FrameReceiver {
  public:

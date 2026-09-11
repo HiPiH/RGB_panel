@@ -4,8 +4,8 @@
 Гонит на плату пробную картинку с заданной частотой и печатает, сколько
 кадров реально ушло. Потери считаются на стороне платы, они видны в её логе.
 
-По умолчанию идёт карусель смайликов: восемь лиц по 10 секунд каждое, дальше
-круг повторяется. Сами смайлики живут в scripts/faces.py.
+По умолчанию идёт карусель смайликов: девять картинок по 10 секунд каждая,
+дальше круг повторяется. Сами смайлики живут в scripts/faces.py.
 
 Примеры:
     python scripts/send_frames.py 192.168.1.42
@@ -35,6 +35,27 @@ PIXELS = faces.PIXELS
 def pattern_smiley(frame_index, elapsed, forced=None):
     """Карусель смайликов, по 10 секунд на каждого."""
     return faces.render(elapsed, forced)
+
+
+def pattern_layout(frame_index, elapsed, forced=None):
+    """Проверка раскладки: где начало координат и куда идут строки.
+
+    Верхняя строка красная и светлеет вправо, левый столбец зелёный и
+    светлеет вниз, сам угол белый. Если на панели картинка перевёрнута
+    или зеркальна, правятся PANEL_FLIP_X и PANEL_FLIP_Y в Config.h.
+    """
+    pixels = bytearray()
+    for y in range(HEIGHT):
+        for x in range(WIDTH):
+            if x == 0 and y == 0:
+                pixels += bytes((255, 255, 255))
+            elif y == 0:
+                pixels += bytes((40 + 215 * x // (WIDTH - 1), 0, 0))
+            elif x == 0:
+                pixels += bytes((0, 40 + 215 * y // (HEIGHT - 1), 0))
+            else:
+                pixels += bytes((0, 0, 16))
+    return bytes(pixels)
 
 
 def pattern_rainbow(frame_index, elapsed, forced=None):
@@ -72,6 +93,7 @@ def pattern_checker(frame_index, elapsed, forced=None):
 
 PATTERNS = {
     "smiley": pattern_smiley,
+    "layout": pattern_layout,
     "rainbow": pattern_rainbow,
     "sweep": pattern_sweep,
     "checker": pattern_checker,

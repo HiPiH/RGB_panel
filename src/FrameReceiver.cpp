@@ -82,9 +82,12 @@ bool FrameReceiver::handlePacket(int size, uint32_t nowMs, CRGB* frame,
   }
 
   const uint8_t* pixels = _packet + FrameProtocol::kHeaderSize;
-  CRGB* target = frame + header.offset;
   for (uint16_t i = 0; i < header.count; i++) {
-    target[i].setRGB(pixels[0], pixels[1], pixels[2]);
+    // Кадр приходит построчно, а лента уложена змейкой, поэтому позиция
+    // пикселя переводится в номер диода.
+    const uint16_t position = header.offset + i;
+    frame[PanelLayout::indexForPosition(position)].setRGB(pixels[0], pixels[1],
+                                                          pixels[2]);
     pixels += FrameProtocol::kBytesPerPixel;
   }
 
