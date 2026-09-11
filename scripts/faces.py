@@ -36,6 +36,8 @@ GLASS = (8, 8, 16)
 GLINT = (240, 246, 255)
 WHITE = (255, 255, 255)
 EYE_WHITE = (240, 238, 226)
+IRIS = (36, 148, 220)
+LID = (96, 84, 68)
 
 CENTER = (WIDTH - 1) / 2.0
 HEAD_RADIUS = 7.3
@@ -364,6 +366,60 @@ def eyes_looking(canvas, bob, gaze, openness=1.0):
             canvas.ellipse(cx + shift, round(5.9 + bob), 0.55, 1.0, DARK)
 
 
+def big_eye(canvas, cx, cy, shift, openness):
+    """Большой глаз: белок, радужка, зрачок, блик.
+
+    shift - сдвиг радужки в пикселях, целое число, иначе зрачок размывается.
+    openness - 1 глаз открыт, 0 закрыт.
+    """
+    rx = 3.0
+    ry = 3.7 * max(0.10, clamp(openness))
+    iris_x = cx + shift
+    iris_r = 2.0
+    pupil_r = 1.25
+
+    def in_sclera(x, y):
+        return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
+
+    def in_iris(x, y):
+        return ((x - iris_x) ** 2 + (y - cy) ** 2 <= iris_r * iris_r
+                and in_sclera(x, y))
+
+    def in_pupil(x, y):
+        return ((x - iris_x) ** 2 + (y - cy) ** 2 <= pupil_r * pupil_r
+                and in_sclera(x, y))
+
+    show_iris = openness > 0.3
+    for py in range(int(cy - ry - 1), int(cy + ry + 2)):
+        for px in range(int(cx - rx - 1), int(cx + rx + 2)):
+            cover = coverage(px, py, in_sclera)
+            if cover <= 0.0:
+                continue
+            # Верх белка притенён: так глаз выглядит шаром под веком.
+            shade = 0.72 + 0.28 * ((py - cy + ry) / (2.0 * ry))
+            canvas.blend(px, py, scale(EYE_WHITE, shade), cover)
+            if not show_iris:
+                continue
+            if abs(px - iris_x) <= iris_r + 1 and abs(py - cy) <= iris_r + 1:
+                iris_cover = coverage(px, py, in_iris)
+                if iris_cover > 0.0:
+                    canvas.blend(px, py, scale(IRIS, shade), iris_cover)
+                pupil_cover = coverage(px, py, in_pupil)
+                if pupil_cover > 0.0:
+                    canvas.blend(px, py, DARK, pupil_cover)
+
+    if show_iris:
+        # Блик на радужке сверху слева, как от того же источника света.
+        canvas.blend(iris_x - 1, cy - 1, WHITE, 0.85)
+
+    if openness < 0.35:
+        # Закрытый глаз рисуем линией века, а не чернотой: иначе панель на
+        # моргании выглядит просто погасшей.
+        strength = clamp((0.35 - openness) / 0.35)
+        for px in range(int(cx - rx), int(cx + rx) + 1):
+            canvas.stroke(px, cy, LID, 1.2, alpha=strength, shaded=False)
+
+
 # --------------------------------------------------------------- смайлики ---
 
 
@@ -377,16 +433,17 @@ def face_smile(canvas, phase):
           thickness=1.2 + 0.4 * wave(phase))
 
 
-def face_gaze(canvas, phase):
-    """Осматривается: взгляд уходит влево, возвращается, уходит вправо."""
-    # Голова тут не покачивается: всё внимание на глазах, а дробный сдвиг
-    # размывал бы зрачок ростом в один пиксель.
-    bob = 0.0
-    head(canvas, bob)
-    gaze = gaze_at(phase)
-    eyes_looking(canvas, bob, gaze, openness=blink(phase, (0.12, 0.63)))
-    # Уголок рта тянется в ту же сторону, куда ушёл взгляд.
-    smile(canvas, bob, 1.3, tilt=-0.7 * gaze)
+def face_eyes(canvas, phase):
+    """Только глаза во всю панель: смотрят влево, прямо, вправо."""
+    # Ни головы, ни рта: два больших глаза на чёрном фоне. Центры стоят на
+    # целых столбцах и симметрично относительно середины панели.
+    shift = round(clamp(gaze_at(phase), -1.0, 1.0)) * 2
+    # Моменты моргания выбраны внутри остановок взгляда: моргать на переводе
+    # взгляда значит потерять и то, и другое.
+    openness = blink(phase, (0.16, 0.45, 0.88), width=0.03)
+    # Строка центра целая: зрачок обязан ложиться в пиксели без размытия.
+    big_eye(canvas, 3.0, 8.0, shift, openness)
+    big_eye(canvas, 12.0, 8.0, shift, openness)
 
 
 def face_wink(canvas, phase):
@@ -458,7 +515,7 @@ def face_cry(canvas, phase):
 
 FACES = (
     ("улыбка", face_smile),
-    ("взгляд", face_gaze),
+    ("глаза", face_eyes),
     ("подмигивание", face_wink),
     ("хохот", face_laugh),
     ("удивление", face_surprise),
